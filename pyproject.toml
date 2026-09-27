@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simplechat"
+version = "0.1.0"
+description = "Minimal secure peer-to-peer CLI chat (Wormhole + Tor + X25519 + ChaCha20-Poly1305)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "simplechat contributors" }]
+dependencies = [
+  "pynacl>=1.5.0",
+  "stem>=1.8.2",
+  "magic-wormhole>=0.14.0",
+  "cryptography>=42.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-timeout>=2.3.0",
+]
+
+[project.scripts]
+simplechat = "simplechat.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 60
+markers = [
+  "live: tests that require Tor and network (deselect with -m 'not live')",
+]
