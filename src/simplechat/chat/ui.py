@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from typing import TextIO
 
+from simplechat.protocol.profile import SecurityProfile
+
 
 class ChatUI:
     def __init__(self, out: TextIO = sys.stdout, err: TextIO = sys.stderr) -> None:
@@ -13,6 +15,7 @@ class ChatUI:
         self.encryption_active = False
         self.tor_active = False
         self.verified = False
+        self.profile: SecurityProfile = SecurityProfile.TOR
 
     def info(self, msg: str) -> None:
         print(msg, file=self.out, flush=True)
@@ -20,14 +23,28 @@ class ChatUI:
     def error(self, msg: str) -> None:
         print(f"Error: {msg}", file=self.err, flush=True)
 
+    def show_profile_banner(self) -> None:
+        if self.profile == SecurityProfile.DIRECT:
+            self.info("Security profile: DIRECT")
+            self.info(
+                "WARNING: Tor is OFF. Peer and network path can see IP addresses. "
+                "Wormhole uses clearnet. This is an explicit security downgrade."
+            )
+        else:
+            self.info("Security profile: TOR (default)")
+
     def show_wormhole_code(self, code: str) -> None:
         self.info("Wormhole code:")
         self.info(code)
 
     def show_status(self) -> None:
         enc = "ACTIVE" if self.encryption_active else "INACTIVE"
-        tor = "ACTIVE" if self.tor_active else "INACTIVE"
+        if self.profile == SecurityProfile.DIRECT:
+            tor = "OFF (direct profile — IPs visible)"
+        else:
+            tor = "ACTIVE" if self.tor_active else "INACTIVE"
         ver = "VERIFIED" if self.verified else "NOT VERIFIED"
+        self.info(f"Profile: {self.profile.value}")
         self.info(f"Encryption: {enc}")
         self.info(f"Tor: {tor}")
         self.info(f"Identity verification: {ver}")

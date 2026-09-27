@@ -13,23 +13,24 @@ Designed to be small, boring, explicit, testable, and auditable.
 ## Quick start
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-
-# Requires `tor` on PATH for real sessions
+# Requires `tor` on PATH for the default profile
 simplechat host
-# → share the wormhole code
-
 simplechat join 7-example-code-here
+
+# Explicit clearnet downgrade (no Tor; IPs visible)
+simplechat host --profile direct --advertise 192.168.1.10
+simplechat join --profile direct 7-example-code-here
 ```
 
 ## Security properties (v1)
 
-**Provides:** confidentiality, integrity, session-level forward secrecy, strict
-replay protection, optional fingerprint verification, no long-term identity,
-no central message store. Bootstrap and chat both use Tor so peers’ clearnet
-IPs are not exposed to each other or to the Wormhole relay.
+**Provides (tor profile):** confidentiality, integrity, session-level forward secrecy,
+strict replay protection, optional fingerprint verification, no long-term identity,
+no central message store. Bootstrap and chat both use Tor so peers’ clearnet IPs
+are not exposed to each other or to the Wormhole relay.
+
+**direct profile:** same encryption, but clearnet Wormhole + plain TCP. Tor is OFF;
+IPs are visible. Must be selected explicitly on both sides.
 
 **Does not provide:** post-compromise security, per-message forward secrecy
 (no Double Ratchet), protection against endpoint malware, anonymity against a

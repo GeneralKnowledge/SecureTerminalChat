@@ -1,12 +1,10 @@
 """Magic Wormhole bootstrap transfer (setup only — never chat traffic).
 
 Uses the ``wormhole`` CLI in a subprocess so we do not fight Twisted's
-single-reactor-per-process limitation, and so host/join can run in
-separate processes cleanly.
+single-reactor-per-process limitation.
 
-Production bootstrap **always** uses Tor (``--tor`` + existing control
-port). Clearnet Wormhole is not used for real sessions: the rendezvous
-relay must not see the peers' clearnet IP addresses.
+- **tor profile:** ``--tor`` + session Tor control port (default)
+- **direct profile:** clearnet Wormhole (explicit security downgrade)
 """
 
 from __future__ import annotations
@@ -42,7 +40,6 @@ def _env() -> dict[str, str]:
     env = os.environ.copy()
     local_bin = str(Path.home() / ".local" / "bin")
     env["PATH"] = local_bin + os.pathsep + env.get("PATH", "")
-    # Reduce terminal noise; never needed for our non-interactive use.
     env.setdefault("WORMHOLE_QR", "0")
     return env
 
@@ -55,7 +52,7 @@ def wormhole_tor_args(tor_control_endpoint: str) -> list[str]:
     ``tcp:127.0.0.1:9051``.
     """
     if not tor_control_endpoint or not tor_control_endpoint.strip():
-        raise WormholeError("tor control endpoint required for Wormhole bootstrap")
+        raise WormholeError("tor control endpoint required for Tor-profile Wormhole")
     return [
         "--tor",
         "--tor-control-port",
@@ -66,21 +63,25 @@ def wormhole_tor_args(tor_control_endpoint: str) -> list[str]:
 def send_bundle(
     bundle_json: str,
     *,
-    tor_control_endpoint: str,
+    tor_control_endpoint: str | None = None,
     on_code: Callable[[str], None] | None = None,
 ) -> str:
     """
-    Send bootstrap JSON via Magic Wormhole **over Tor**.
+    Send bootstrap JSON via Magic Wormhole.
 
-    ``tor_control_endpoint`` must point at this session's Tor control port
-    (CookieAuthentication; same user as simplechat).
+    Pass ``tor_control_endpoint`` for the tor profile. Omit it for direct
+    (clearnet) profile — an intentional security downgrade.
     """
     wh = _wormhole_bin()
     code_holder: dict[str, str] = {}
-    tor_args = wormhole_tor_args(tor_control_endpoint)
+    if tor_control_endpoint is not None:
+        tor_args = wormhole_tor_args(tor_control_endpoint)
+        log.info("wormhole send via Tor control %s", tor_control_endpoint)
+    else:
+        tor_args = []
+        log.info("wormhole send via clearnet (direct profile)")
 
     cmd = [wh, "--appid", APPID, "send", *tor_args, "--text", bundle_json]
-    log.info("wormhole send via Tor control %s", tor_control_endpoint)
 
     proc = subprocess.Popen(
         cmd,
@@ -117,22 +118,29 @@ def send_bundle(
     t_out.join(timeout=2)
     t_err.join(timeout=2)
     if rc != 0:
-        raise WormholeError(
-            f"wormhole send failed with exit {rc} "
+        hint = (
             "(is Tor running and the control port reachable?)"
+            if tor_control_endpoint
+            else "(clearnet Wormhole failed)"
         )
+        raise WormholeError(f"wormhole send failed with exit {rc} {hint}")
     code = code_holder.get("code")
     if not code:
         raise WormholeError("wormhole send failed: no code captured")
     return code
 
 
-def receive_bundle(code: str, *, tor_control_endpoint: str) -> str:
-    """Receive bootstrap JSON via Magic Wormhole **over Tor**."""
+def receive_bundle(code: str, *, tor_control_endpoint: str | None = None) -> str:
+    """Receive bootstrap JSON via Magic Wormhole (Tor or clearnet)."""
     wh = _wormhole_bin()
-    tor_args = wormhole_tor_args(tor_control_endpoint)
+    if tor_control_endpoint is not None:
+        tor_args = wormhole_tor_args(tor_control_endpoint)
+        log.info("wormhole receive via Tor control %s", tor_control_endpoint)
+    else:
+        tor_args = []
+        log.info("wormhole receive via clearnet (direct profile)")
+
     cmd = [wh, "--appid", APPID, "receive", *tor_args, "--only-text", code]
-    log.info("wormhole receive via Tor control %s", tor_control_endpoint)
 
     try:
         proc = subprocess.run(
@@ -150,10 +158,12 @@ def receive_bundle(code: str, *, tor_control_endpoint: str) -> str:
 
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()
-        raise WormholeError(
-            f"wormhole receive failed: {err} "
+        hint = (
             "(is Tor running and the control port reachable?)"
+            if tor_control_endpoint
+            else "(clearnet Wormhole failed)"
         )
+        raise WormholeError(f"wormhole receive failed: {err} {hint}")
 
     text = (proc.stdout or "").strip()
     if not text:

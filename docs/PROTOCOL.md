@@ -11,16 +11,18 @@ CONTEXT          = "simplechat-v1"
 Any unexpected `protocol_version` in bootstrap or frames causes immediate session
 termination.
 
-## Roles
+## Profiles
 
-| Role | CLI | Responsibilities |
-| --- | --- | --- |
-| Host | `simplechat host` | Tor onion service, Wormhole send, wait for join, accept joiner pubkey |
-| Joiner | `simplechat join <code>` | Wormhole receive, Tor connect, send joiner pubkey |
+| Profile | CLI | Bootstrap | Chat transport |
+| --- | --- | --- | --- |
+| `tor` (default) | `--profile tor` | Wormhole **over Tor** | Ephemeral onion |
+| `direct` | `--profile direct` | Wormhole **clearnet** | Plain TCP |
 
-## Session Establishment
+`direct` is an explicit security downgrade: peer and network path can see IP
+addresses. Both sides must use the same profile; the bootstrap bundle's
+`transport` field must match the joiner's `--profile`.
 
-### Host
+### Host (tor)
 
 1. Start ephemeral Tor (Stem-managed).
 2. Publish ephemeral onion service on a fixed local port.
@@ -31,11 +33,15 @@ termination.
 {
   "protocol": "simplechat",
   "protocol_version": 1,
+  "transport": "tor",
   "onion_address": "<56-char-v3-onion>.onion",
   "onion_port": 9400,
   "host_ephemeral_public_key": "<base64 32-byte X25519 public key>"
 }
 ```
+
+Direct-profile bundle instead uses `"transport":"direct"` with `host_address` /
+`host_port` (no onion fields).
 
 5. Transfer bundle via Magic Wormhole **over Tor** (`wormhole --tor` using this
    session's Tor control port — not clearnet).

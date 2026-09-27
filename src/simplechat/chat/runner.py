@@ -4,18 +4,28 @@ from __future__ import annotations
 
 import logging
 import select
-import socket
 import sys
 import threading
-from typing import BinaryIO, Protocol
+from typing import Protocol
 
 from simplechat.bootstrap.wormhole_bootstrap import WormholeError, receive_bundle, send_bundle
 from simplechat.chat.ui import ChatUI
 from simplechat.crypto.agreement import EphemeralKeyPair
 from simplechat.protocol.constants import DEFAULT_ONION_PORT
-from simplechat.protocol.handshake import BootstrapBundle, make_host_bundle
+from simplechat.protocol.handshake import (
+    BootstrapBundle,
+    make_direct_bundle,
+    make_tor_bundle,
+)
+from simplechat.protocol.profile import SecurityProfile
 from simplechat.protocol.session import ProtocolError, Session
 from simplechat.protocol.state import SessionState
+from simplechat.transport.direct import (
+    DirectListener,
+    DirectTransportError,
+    connect_direct,
+    guess_advertise_address,
+)
 from simplechat.transport.tor_transport import TorError, TorTransport
 
 log = logging.getLogger("simplechat.chat")
@@ -66,13 +76,11 @@ def _recv_loop(session: Session, conn: ByteStream, ui: ChatUI, stop: threading.E
 
 def _chat_loop(session: Session, conn: ByteStream, ui: ChatUI, stop: threading.Event) -> None:
     while not stop.is_set():
-        # Use select on stdin when possible
         if sys.stdin in (None,):
             break
         try:
             ready, _, _ = select.select([sys.stdin], [], [], 0.5)
         except (OSError, ValueError):
-            # Non-interactive; wait for stop
             stop.wait(0.5)
             continue
         if stop.is_set():
@@ -138,84 +146,122 @@ def run_established_chat(session: Session, conn: ByteStream, ui: ChatUI) -> None
 def run_host(
     *,
     ui: ChatUI | None = None,
-    use_tor: bool = True,
+    profile: SecurityProfile = SecurityProfile.TOR,
     use_wormhole: bool = True,
     bundle_sink: list[str] | None = None,
     accept_conn: ByteStream | None = None,
     onion_port: int = DEFAULT_ONION_PORT,
+    advertise: str | None = None,
+    listen_port: int = 0,
 ) -> int:
     """
-    Host a session. For tests, pass use_tor=False, use_wormhole=False,
-    bundle_sink list, and accept_conn pre-connected stream.
+    Host a session.
+
+    Profiles:
+      tor    — Tor onion + Wormhole-over-Tor (default)
+      direct — plain TCP + clearnet Wormhole (explicit downgrade)
+
+    For tests: use_wormhole=False, accept_conn=..., profile=direct or tor with
+    fake bundle fields as needed.
     """
     ui = ui or ChatUI()
+    ui.profile = profile
     tor: TorTransport | None = None
+    listener: DirectListener | None = None
     session: Session | None = None
     conn: ByteStream | None = accept_conn
 
     try:
         session = Session(is_host=True, local_keys=EphemeralKeyPair.generate())
         session.transition(SessionState.BOOTSTRAPPING)
+        ui.show_profile_banner()
 
-        if use_tor:
-            ui.info("Starting Tor...")
-            tor = TorTransport()
-            onion = tor.start(create_onion=True, onion_port=onion_port)
-            if onion is None:
-                raise TorError("onion service not created")
-            ui.tor_active = True
-            bundle = make_host_bundle(onion.address, session.local_keys.public_bytes, onion.port)
+        if profile == SecurityProfile.TOR:
+            if accept_conn is None:
+                ui.info("Starting Tor...")
+                tor = TorTransport()
+                onion = tor.start(create_onion=True, onion_port=onion_port)
+                if onion is None:
+                    raise TorError("onion service not created")
+                ui.tor_active = True
+                bundle = make_tor_bundle(
+                    onion.address, session.local_keys.public_bytes, onion.port
+                )
+            else:
+                # In-process test path with injected connection
+                ui.tor_active = False
+                bundle = make_tor_bundle(
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
+                    session.local_keys.public_bytes,
+                    onion_port,
+                )
         else:
-            # Test/local mode: fake onion in bundle; real conn provided
-            bundle = make_host_bundle(
-                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
-                session.local_keys.public_bytes,
-                onion_port,
-            )
+            ui.tor_active = False
+            if accept_conn is None:
+                adv = advertise or guess_advertise_address()
+                listener = DirectListener(bind_host="0.0.0.0", bind_port=listen_port)
+                ui.info(f"Listening on 0.0.0.0:{listener.bind_port}")
+                ui.info(f"Advertising {adv}:{listener.bind_port}")
+                bundle = make_direct_bundle(
+                    adv, listener.bind_port, session.local_keys.public_bytes
+                )
+            else:
+                adv = advertise or "127.0.0.1"
+                port = listen_port or 9400
+                bundle = make_direct_bundle(adv, port, session.local_keys.public_bytes)
 
         bundle_json = bundle.to_json()
         if bundle_sink is not None:
             bundle_sink.append(bundle_json)
 
         if use_wormhole:
-            if tor is None:
-                raise TorError("Tor required for Wormhole bootstrap")
-            ui.info("Connecting to Magic Wormhole via Tor...")
+            if profile == SecurityProfile.TOR:
+                if tor is None:
+                    raise TorError("Tor required for tor-profile Wormhole")
+                ui.info("Connecting to Magic Wormhole via Tor...")
+                tor_ep: str | None = tor.control_endpoint
+            else:
+                ui.info("Connecting to Magic Wormhole via clearnet (direct profile)...")
+                tor_ep = None
 
             def _show(code: str) -> None:
                 ui.show_wormhole_code(code)
                 ui.info("Waiting for peer...")
 
-            send_bundle(
-                bundle_json,
-                tor_control_endpoint=tor.control_endpoint,
-                on_code=_show,
-            )
+            send_bundle(bundle_json, tor_control_endpoint=tor_ep, on_code=_show)
         else:
             ui.info("Waiting for peer (local mode)...")
 
         session.transition(SessionState.CONNECTING)
         if conn is None:
-            assert tor is not None
-            conn = tor.accept(timeout=600)
+            if profile == SecurityProfile.TOR:
+                assert tor is not None
+                conn = tor.accept(timeout=600)
+            else:
+                assert listener is not None
+                conn = listener.accept(timeout=600)
 
         ui.info("Peer connected (transport).")
         session.transition(SessionState.HANDSHAKING)
 
-        # Read until handshake event
         while session.session_keys is None:
             data = conn.recv(4096)
             if not data:
                 raise ProtocolError("peer disconnected during handshake")
             events = session.feed(data)
             if not any(k == "handshake" for k, _ in events):
-                # may be partial; continue
                 if session.session_keys is None and events:
                     raise ProtocolError("unexpected message during handshake")
 
         run_established_chat(session, conn, ui)
         return 0
-    except (TorError, WormholeError, ProtocolError, ValueError) as exc:
+    except (
+        TorError,
+        WormholeError,
+        ProtocolError,
+        ValueError,
+        DirectTransportError,
+    ) as exc:
         ui.error(str(exc))
         return 1
     except KeyboardInterrupt:
@@ -233,6 +279,8 @@ def run_host(
                 conn.close()
             except OSError:
                 pass
+        if listener is not None:
+            listener.close()
         if tor is not None:
             tor.stop()
             ui.tor_active = False
@@ -242,12 +290,13 @@ def run_join(
     code: str | None = None,
     *,
     ui: ChatUI | None = None,
-    use_tor: bool = True,
+    profile: SecurityProfile = SecurityProfile.TOR,
     use_wormhole: bool = True,
     bundle_json: str | None = None,
     conn: ByteStream | None = None,
 ) -> int:
     ui = ui or ChatUI()
+    ui.profile = profile
     tor: TorTransport | None = None
     session: Session | None = None
     stream: ByteStream | None = conn
@@ -255,46 +304,68 @@ def run_join(
     try:
         session = Session(is_host=False, local_keys=EphemeralKeyPair.generate())
         session.transition(SessionState.BOOTSTRAPPING)
+        ui.show_profile_banner()
 
-        # Start Tor before Wormhole so bootstrap does not use clearnet.
-        if use_tor:
+        if profile == SecurityProfile.TOR and (use_wormhole or stream is None):
             ui.info("Starting Tor...")
             tor = TorTransport()
             tor.start(create_onion=False)
             ui.tor_active = True
-        elif use_wormhole:
-            raise TorError("Tor required for Wormhole bootstrap")
+        else:
+            ui.tor_active = False
 
         if use_wormhole:
             if not code:
                 raise WormholeError("wormhole code required")
-            assert tor is not None
-            ui.info("Connecting to Magic Wormhole via Tor...")
-            raw = receive_bundle(code, tor_control_endpoint=tor.control_endpoint)
+            if profile == SecurityProfile.TOR:
+                assert tor is not None
+                ui.info("Connecting to Magic Wormhole via Tor...")
+                raw = receive_bundle(code, tor_control_endpoint=tor.control_endpoint)
+            else:
+                ui.info("Connecting to Magic Wormhole via clearnet (direct profile)...")
+                raw = receive_bundle(code, tor_control_endpoint=None)
         else:
             if not bundle_json:
                 raise ValueError("bundle_json required in local mode")
             raw = bundle_json
 
         bundle = BootstrapBundle.from_json(raw)
+        if bundle.profile != profile:
+            raise ValueError(
+                f"profile mismatch: CLI is {profile.value}, "
+                f"bootstrap bundle is {bundle.profile.value}"
+            )
+
         session.transition(SessionState.CONNECTING)
 
-        if use_tor:
-            assert tor is not None
-            ui.info("Connecting to onion service...")
-            stream = tor.connect_onion(bundle.onion_address, bundle.onion_port)
-        elif stream is None:
-            raise ValueError("conn required in local mode")
+        if stream is None:
+            if profile == SecurityProfile.TOR:
+                assert tor is not None
+                assert bundle.onion_address is not None and bundle.onion_port is not None
+                ui.info("Connecting to onion service...")
+                stream = tor.connect_onion(bundle.onion_address, bundle.onion_port)
+            else:
+                assert bundle.host_address is not None and bundle.host_port is not None
+                ui.info(
+                    f"Connecting directly to {bundle.host_address}:{bundle.host_port}..."
+                )
+                stream = connect_direct(bundle.host_address, bundle.host_port)
+        # else: injected test connection
 
         session.transition(SessionState.HANDSHAKING)
         assert stream is not None
-        # Derive keys using host pubkey from bundle, then send our pubkey
         session.accept_peer_public_key(bundle.host_ephemeral_public_key)
         stream.sendall(session.build_handshake_frame())
 
         run_established_chat(session, stream, ui)
         return 0
-    except (TorError, WormholeError, ProtocolError, ValueError) as exc:
+    except (
+        TorError,
+        WormholeError,
+        ProtocolError,
+        ValueError,
+        DirectTransportError,
+    ) as exc:
         ui.error(str(exc))
         return 1
     except KeyboardInterrupt:
