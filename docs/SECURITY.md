@@ -23,7 +23,8 @@
 | Best-effort key wipe | GC/swap may retain remnants |
 | Optional verification | Unverified sessions are vulnerable to Wormhole-code theft MITM before connect |
 | Tor traffic analysis | Not mitigated beyond Tor itself |
-| Wormhole mailbox metadata | Appid + transfer timing still visible to the relay (not clearnet client IPs) |
+| `direct` profile | Explicit downgrade: clearnet Wormhole + plain TCP; peer/path see IPs |
+| Wormhole mailbox metadata | Appid + transfer timing still visible to the relay (not clearnet client IPs on tor profile) |
 | Code handoff channel | SMS/email/chat apps can link the two people socially |
 | Endpoint malware | Out of scope |
 
