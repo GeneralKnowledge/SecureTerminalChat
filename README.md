@@ -2,7 +2,7 @@
 
 Peer-to-peer CLI chat with:
 
-1. **Magic Wormhole** — bootstrap only (onion address + host ephemeral public key)
+1. **Magic Wormhole over Tor** — bootstrap only (onion address + host ephemeral public key); rendezvous via the session Tor, not clearnet
 2. **Tor** — ephemeral onion transport for all chat traffic
 3. **X25519** — ephemeral session key agreement (PyNaCl / libsodium)
 4. **ChaCha20-Poly1305** — authenticated encryption (IETF AEAD via PyNaCl)
@@ -28,11 +28,13 @@ simplechat join 7-example-code-here
 
 **Provides:** confidentiality, integrity, session-level forward secrecy, strict
 replay protection, optional fingerprint verification, no long-term identity,
-no central message store.
+no central message store. Bootstrap and chat both use Tor so peers’ clearnet
+IPs are not exposed to each other or to the Wormhole relay.
 
 **Does not provide:** post-compromise security, per-message forward secrecy
-(no Double Ratchet), protection against endpoint malware, or guarantees beyond
-Tor against traffic analysis.
+(no Double Ratchet), protection against endpoint malware, anonymity against a
+global traffic-analysis adversary, or hiding that a Wormhole transfer occurred
+(mailbox still sees appid/timing).
 
 See `docs/` for the full threat model, protocol specification, and limitations.
 

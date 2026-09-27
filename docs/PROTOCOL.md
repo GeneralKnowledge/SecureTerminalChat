@@ -37,19 +37,21 @@ termination.
 }
 ```
 
-5. Transfer bundle via Magic Wormhole (`send`).
+5. Transfer bundle via Magic Wormhole **over Tor** (`wormhole --tor` using this
+   session's Tor control port — not clearnet).
 6. Display wormhole code; wait for inbound Tor TCP connection.
 7. Read joiner handshake frame containing joiner public key.
 8. Perform key agreement; enter VERIFYING / ESTABLISHED.
 
 ### Joiner
 
-1. Receive and validate bootstrap bundle via Wormhole (`receive`).
-2. Validate `protocol`, `protocol_version`, onion address form, port range, pubkey length.
-3. Generate ephemeral X25519 keypair `(J_sk, J_pk)`. Keep `J_sk` local only.
-4. Connect to `onion_address:onion_port` through Tor SOCKS.
-5. Send handshake frame with `J_pk`.
-6. Perform key agreement; enter VERIFYING / ESTABLISHED.
+1. Start ephemeral Tor (SOCKS + control port) **before** Wormhole.
+2. Receive and validate bootstrap bundle via Wormhole **over Tor**.
+3. Validate `protocol`, `protocol_version`, onion address form, port range, pubkey length.
+4. Generate ephemeral X25519 keypair `(J_sk, J_pk)`. Keep `J_sk` local only.
+5. Connect to `onion_address:onion_port` through Tor SOCKS.
+6. Send handshake frame with `J_pk`.
+7. Perform key agreement; enter VERIFYING / ESTABLISHED.
 
 ## Key Agreement
 

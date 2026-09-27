@@ -35,6 +35,9 @@ identity keys, and no persistent accounts.
   after ephemeral keys are destroyed (session-level forward secrecy).
 - Bootstrap eavesdroppers without the Wormhole code cannot easily obtain the onion
   address and host ephemeral public key (Wormhole PAKE properties).
+- **Wormhole bootstrap runs over Tor** (session Tor control port). The public
+  rendezvous relay should see a Tor exit (or equivalent), not the peers'
+  clearnet IP addresses.
 
 ## What v1 Does NOT Protect Against
 
@@ -68,5 +71,8 @@ identity keys, and no persistent accounts.
 
 - If the Wormhole code is leaked before the join completes, an attacker may obtain
   the onion address and host public key and attempt to connect first.
+- The Wormhole **mailbox still learns** that two parties using appid `simplechat.v1`
+  completed a transfer (timing, success). It should not learn clearnet IPs when
+  Tor bootstrap is used, but traffic analysis / Tor limitations still apply.
 - Strict counter semantics mean a lost frame ends the session (fail closed).
 - Fingerprint verification is optional; unverified sessions are clearly labeled.

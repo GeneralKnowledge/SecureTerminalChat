@@ -3,6 +3,10 @@
 Uses the ``wormhole`` CLI in a subprocess so we do not fight Twisted's
 single-reactor-per-process limitation, and so host/join can run in
 separate processes cleanly.
+
+Production bootstrap **always** uses Tor (``--tor`` + existing control
+port). Clearnet Wormhole is not used for real sessions: the rendezvous
+relay must not see the peers' clearnet IP addresses.
 """
 
 from __future__ import annotations
@@ -38,21 +42,48 @@ def _env() -> dict[str, str]:
     env = os.environ.copy()
     local_bin = str(Path.home() / ".local" / "bin")
     env["PATH"] = local_bin + os.pathsep + env.get("PATH", "")
+    # Reduce terminal noise; never needed for our non-interactive use.
+    env.setdefault("WORMHOLE_QR", "0")
     return env
 
 
-def send_bundle(bundle_json: str, on_code: Callable[[str], None] | None = None) -> str:
+def wormhole_tor_args(tor_control_endpoint: str) -> list[str]:
     """
-    Send bootstrap JSON via Magic Wormhole.
-    Calls on_code(code) when the code appears on stderr/stdout.
-    Blocks until the peer receives (or failure).
-    Returns the wormhole code.
+    CLI flags so Magic Wormhole uses an already-running Tor via control port.
+
+    ``tor_control_endpoint`` is a Twisted client endpoint string, e.g.
+    ``tcp:127.0.0.1:9051``.
+    """
+    if not tor_control_endpoint or not tor_control_endpoint.strip():
+        raise WormholeError("tor control endpoint required for Wormhole bootstrap")
+    return [
+        "--tor",
+        "--tor-control-port",
+        tor_control_endpoint.strip(),
+    ]
+
+
+def send_bundle(
+    bundle_json: str,
+    *,
+    tor_control_endpoint: str,
+    on_code: Callable[[str], None] | None = None,
+) -> str:
+    """
+    Send bootstrap JSON via Magic Wormhole **over Tor**.
+
+    ``tor_control_endpoint`` must point at this session's Tor control port
+    (CookieAuthentication; same user as simplechat).
     """
     wh = _wormhole_bin()
     code_holder: dict[str, str] = {}
+    tor_args = wormhole_tor_args(tor_control_endpoint)
+
+    cmd = [wh, "--appid", APPID, "send", *tor_args, "--text", bundle_json]
+    log.info("wormhole send via Tor control %s", tor_control_endpoint)
 
     proc = subprocess.Popen(
-        [wh, "--appid", APPID, "send", "--text", bundle_json],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -86,19 +117,26 @@ def send_bundle(bundle_json: str, on_code: Callable[[str], None] | None = None) 
     t_out.join(timeout=2)
     t_err.join(timeout=2)
     if rc != 0:
-        raise WormholeError(f"wormhole send failed with exit {rc}")
+        raise WormholeError(
+            f"wormhole send failed with exit {rc} "
+            "(is Tor running and the control port reachable?)"
+        )
     code = code_holder.get("code")
     if not code:
         raise WormholeError("wormhole send failed: no code captured")
     return code
 
 
-def receive_bundle(code: str) -> str:
-    """Receive bootstrap JSON string via Magic Wormhole code."""
+def receive_bundle(code: str, *, tor_control_endpoint: str) -> str:
+    """Receive bootstrap JSON via Magic Wormhole **over Tor**."""
     wh = _wormhole_bin()
+    tor_args = wormhole_tor_args(tor_control_endpoint)
+    cmd = [wh, "--appid", APPID, "receive", *tor_args, "--only-text", code]
+    log.info("wormhole receive via Tor control %s", tor_control_endpoint)
+
     try:
         proc = subprocess.run(
-            [wh, "--appid", APPID, "receive", "--only-text", code],
+            cmd,
             capture_output=True,
             text=True,
             timeout=600,
@@ -112,11 +150,13 @@ def receive_bundle(code: str) -> str:
 
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()
-        raise WormholeError(f"wormhole receive failed: {err}")
+        raise WormholeError(
+            f"wormhole receive failed: {err} "
+            "(is Tor running and the control port reachable?)"
+        )
 
     text = (proc.stdout or "").strip()
     if not text:
-        # sometimes message lands on stderr alongside status
         text = (proc.stderr or "").strip()
     if not text:
         raise WormholeError("wormhole receive failed: empty message")

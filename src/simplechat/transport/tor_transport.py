@@ -56,6 +56,17 @@ class TorTransport:
         return self._socks_port
 
     @property
+    def control_port(self) -> int:
+        if self._control_port is None:
+            raise TorError("Tor not started")
+        return self._control_port
+
+    @property
+    def control_endpoint(self) -> str:
+        """Twisted client endpoint string for this Tor control port."""
+        return f"tcp:127.0.0.1:{self.control_port}"
+
+    @property
     def onion(self) -> OnionEndpoint | None:
         return self._onion
 

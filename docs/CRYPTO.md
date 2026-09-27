@@ -114,6 +114,6 @@ On `CLOSING` / `CLOSED`:
 | --- | --- | --- |
 | AEAD | ChaCha20-Poly1305 IETF via PyNaCl bindings | Requirement; not SecretBox (XSalsa20) |
 | KDF | HKDF-SHA256 via `cryptography` | Established API; already a Wormhole dependency |
-| Bootstrap transport | `wormhole` CLI subprocess | Avoids Twisted reactor reuse; auditable boundary |
+| Bootstrap transport | `wormhole` CLI subprocess over Tor | Avoids Twisted reactor reuse; `--tor` + session control port so relay does not see clearnet client IPs |
 | Replay window | Strict expected-counter only | Simplicity; fail closed on loss |
 | Ratcheting | None | Session-level FS only; documented limitation |

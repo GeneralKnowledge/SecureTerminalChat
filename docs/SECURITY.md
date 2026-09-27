@@ -7,8 +7,10 @@
 2. The Tor binary and Stem control port interaction are available and honest.
 3. Magic Wormhole’s PAKE and mailbox behave as documented; the wormhole code is
    conveyed to the joiner over a channel the user considers adequate for bootstrap.
-4. libsodium (via PyNaCl) and `cryptography`’s HKDF are correct.
-5. Users who enable fingerprint verification compare codes on a separate channel
+4. Wormhole bootstrap uses this session’s Tor (`--tor` + control port), so the
+   rendezvous relay should not see peers’ clearnet IP addresses.
+5. libsodium (via PyNaCl) and `cryptography`’s HKDF are correct.
+6. Users who enable fingerprint verification compare codes on a separate channel
    not controlled by the same network attacker of interest.
 
 ## Known Limitations
@@ -21,6 +23,8 @@
 | Best-effort key wipe | GC/swap may retain remnants |
 | Optional verification | Unverified sessions are vulnerable to Wormhole-code theft MITM before connect |
 | Tor traffic analysis | Not mitigated beyond Tor itself |
+| Wormhole mailbox metadata | Appid + transfer timing still visible to the relay (not clearnet client IPs) |
+| Code handoff channel | SMS/email/chat apps can link the two people socially |
 | Endpoint malware | Out of scope |
 
 ## Claims We Do Not Make
@@ -28,3 +32,4 @@
 - That fingerprint verification proves a clean device
 - That v1 is anonymous against a global passive adversary beyond Tor’s model
 - That v1 replaces Signal, TLS, or Tor Browser hardening
+- That Tor-wrapped Wormhole eliminates all bootstrap metadata

@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `pynacl` | X25519, ChaCha20-Poly1305 IETF | libsodium bindings; do not implement crypto |
 | `stem` | Launch/control Tor, ephemeral onion services | Standard Tor controller library |
-| `magic-wormhole` | Bootstrap bundle transfer | PAKE-based rendezvous; not used for chat traffic |
+| `magic-wormhole` | Bootstrap bundle transfer **over Tor** | PAKE rendezvous; CLI invoked with `--tor` + session control port |
 | `cryptography` | HKDF-SHA256 | Established KDF API; already pulled in by Wormhole |
 
 ## Standard Library

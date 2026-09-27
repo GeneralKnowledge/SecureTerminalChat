@@ -178,11 +178,19 @@ def run_host(
             bundle_sink.append(bundle_json)
 
         if use_wormhole:
+            if tor is None:
+                raise TorError("Tor required for Wormhole bootstrap")
+            ui.info("Connecting to Magic Wormhole via Tor...")
+
             def _show(code: str) -> None:
                 ui.show_wormhole_code(code)
                 ui.info("Waiting for peer...")
 
-            send_bundle(bundle_json, on_code=_show)
+            send_bundle(
+                bundle_json,
+                tor_control_endpoint=tor.control_endpoint,
+                on_code=_show,
+            )
         else:
             ui.info("Waiting for peer (local mode)...")
 
@@ -248,11 +256,21 @@ def run_join(
         session = Session(is_host=False, local_keys=EphemeralKeyPair.generate())
         session.transition(SessionState.BOOTSTRAPPING)
 
+        # Start Tor before Wormhole so bootstrap does not use clearnet.
+        if use_tor:
+            ui.info("Starting Tor...")
+            tor = TorTransport()
+            tor.start(create_onion=False)
+            ui.tor_active = True
+        elif use_wormhole:
+            raise TorError("Tor required for Wormhole bootstrap")
+
         if use_wormhole:
             if not code:
                 raise WormholeError("wormhole code required")
-            ui.info("Connecting to Magic Wormhole...")
-            raw = receive_bundle(code)
+            assert tor is not None
+            ui.info("Connecting to Magic Wormhole via Tor...")
+            raw = receive_bundle(code, tor_control_endpoint=tor.control_endpoint)
         else:
             if not bundle_json:
                 raise ValueError("bundle_json required in local mode")
@@ -262,10 +280,7 @@ def run_join(
         session.transition(SessionState.CONNECTING)
 
         if use_tor:
-            ui.info("Starting Tor...")
-            tor = TorTransport()
-            tor.start(create_onion=False)
-            ui.tor_active = True
+            assert tor is not None
             ui.info("Connecting to onion service...")
             stream = tor.connect_onion(bundle.onion_address, bundle.onion_port)
         elif stream is None:
